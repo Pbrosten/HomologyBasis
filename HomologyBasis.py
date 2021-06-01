@@ -6,7 +6,8 @@ from scipy.io import loadmat
 from matplotlib import collections  as mc
 import miniball
 import math
-import pylab as pl
+#import matplotlib.pylabs as pl
+import matplotlib.pyplot as plt
 class SimplexTree(object):
     """ Construct a valid filtered simplicial complex with a structure mimicking GUDHI's SimplexTree.
     
@@ -74,15 +75,15 @@ class SimplexTree(object):
         """
         f_value=float(filtration)
         t_sigma=tuple(sorted(sigma))
-        if t_sigma in self.simplices:
+        if t_sigma in self.filtrations.keys():
             self.filtrations.update({t_sigma:f_value})
             return False
+        
         for k in range(1, len(sigma)):
             for face in combinations(sigma, k):
-                if (face not in self.simplices) or (self.filtrations[face]>f_value):
+                if (face not in self.filtrations.keys()) or (self.filtrations[face]>f_value):
                     self.simplices.append(face)
                     self.filtrations[face]=f_value
-        self.simplices.append(t_sigma)
         self.filtrations[t_sigma]=f_value
         return True
         
@@ -141,9 +142,10 @@ class SimplexTree(object):
         def dim(x):
             return len(x)
         #sort simplices by increasing dimension
-        our_complex=self.simplices
-        our_complex.sort(key=dim)
+        sorted_complex=dict(sorted(self.filtrations.items(),key=dim))
+        our_complex=list(sorted_complex.keys())
         #return dimension of larges simplex
+        #print(our_complex)
         return len(our_complex[-1])-1
     
     def num_vertices(self):
@@ -217,7 +219,6 @@ class SimplexTree(object):
             sigma_filtration=self.filtrations.get(sigma)
             for face_sigma in combinations(sigma,len(sigma)-1):
                 face_filtration=self.filtrations.get(face_sigma)
-                #print(str(face_sigma)+'='+str(face_filtration),str(sigma)+'='+str(sigma_filtration))
                 if face_filtration>sigma_filtration:
                     sigma_filtration=face_filtration
                     change=True
@@ -246,7 +247,7 @@ class SimplexTree(object):
         ordered_complex=list()
         for sigma in our_complex:
             ordered_complex.append(tuple(sigma[0]))
-        phom=filtered_homology_basis(np.array(ordered_complex),max_face_card=(self.dimension())+1,coeff_field=coeff_field)
+        phom=filtered_homology_basis(np.array(ordered_complex),max_face_card=self.dimension()+1,coeff_field=coeff_field)
         return phom
     
     def filtration_function(self):
@@ -276,10 +277,13 @@ class SimplexTree(object):
         """
         filt_fct=self.filtration_function()
         phom=self.homology_basis()
-        p_pairs=persistence_pairs(phom,filt_fct,coeff_field)
-        return p_pairs
+        p_pairs=persistence_pairs(phom,filt_fct,max_dimension=self.dimension()+1)
+        pers_pairs=[]
+        for dim in p_pairs.keys():
+            pers_pairs.append(p_pairs[dim])
+        return pers_pairs
     
-    def persistence(self,coeff_field=11,min_persistence=0.0,persistence_dim_max=False):
+    def persistence(self,min_persistence=0.0,max_dim=2,persistence_dim_max=False):
         """ Compute persistent homology on the current simplicial complex.
         
         Parameters
@@ -301,7 +305,7 @@ class SimplexTree(object):
         """
         filt_fct=self.filtration_function()
         phom=self.homology_basis()
-        p_pairs=persistence_pairs(phom,filt_fct,coeff_field)
+        p_pairs=persistence_pairs(phom,filt_fct,max_dim)
         persistence_list=list()
         for n in p_pairs:
             for pair in p_pairs[n]:
@@ -363,48 +367,41 @@ def degreewise_ordered_complex(
     return simplices[np.argsort(filtration_values, kind='stable')]
 
 def reduction(homology_basis, w, wlowv, v, support_v):
-    if not w:#if col_wo is empty after removing lowv then multiply -(value of lowv) to all other simplices in v and return
+    if not w:
         return {tau: (-wlowv * val) % homology_basis['coeff_field'] for tau, val in v.items()} 
-        #return dict((tau, (- wlowv * v[tau]) 
-        #                  % homology_basis['coeff_field']) for tau in support_v)
+        
     v_multiplied = {tau: -wlowv * val for tau, val in v.items()}
-    #new_v = {tau: val for tau, val in v_multiplied.items() if tau in w.keys()}
     red = w.copy()
     red.update(v_multiplied)
     for tau in support_v.intersection(w.keys()):
-        redtau = (w.get(tau, 0) + v_multiplied.get(tau,0)) % homology_basis['coeff_field'] #column operations for reduction
+        redtau = (w.get(tau, 0) + v_multiplied.get(tau,0)) % homology_basis['coeff_field']
         if redtau == 0:
             red.pop(tau)
         else:
             red[tau] = redtau
-    return red #dict((tau, val) for tau, val in red.items() if val > 0) 
+    return red 
 
 def kill_persistence(homology_basis, v, simplex):
     homology_basis['v'].append(v)
     support_v = set(v) 
     lowv = homology_basis['simplices'][max(homology_basis['index_table'][face] for face in support_v)]
-    support_v.remove(lowv) #why do we remove lowv from support
+    support_v.remove(lowv)
     inversevlowv = homology_basis['inversion_function'](v[lowv])
     v.pop(lowv)
-    v = {tau: (val * inversevlowv) % #####################################tau are faces of simplex and they are paired                                                              
-         homology_basis['coeff_field'] for tau, val in v.items()}         #with their value in the old homology basis
+    v = {tau: (val * inversevlowv) %                                                               
+         homology_basis['coeff_field'] for tau, val in v.items()}
     homology_basis['persistence'][lowv] = simplex
 
-    
-    #print('transpose', homology_basis['transpose'])
-    #print('basis', homology_basis['basis'])
     for column, val in homology_basis['transpose'].pop(lowv):
         column_without_lowv = dict(homology_basis['basis'][column])
-        #print(lowv, column_without_lowv)
         column_without_lowv.pop(lowv)
         reduced_column = reduction(
-            homology_basis, #homology basis
-            column_without_lowv, #removal of lowv simplex
+            homology_basis,
+            column_without_lowv,
             val, 
             v, 
             support_v)
-#        , 
-#            inversevlowv)
+
         homology_basis['basis'][column] = frozenset(reduced_column.items())
         for row in support_v.intersection(column_without_lowv):
             homology_basis['transpose'][row].remove((column, column_without_lowv[row]))
@@ -412,7 +409,6 @@ def kill_persistence(homology_basis, v, simplex):
         if not homology_basis['basis'][column]:
             homology_basis['basis'].pop(column)
             homology_basis['keys'].remove(column)
-            #homology_basis['row_support'].pop(column, None)
             homology_basis['index_table'].pop(column)
         else:
             for row in support_v.intersection(reduced_column):
@@ -425,16 +421,14 @@ def contract_homology_basis(
     boundary = tuple(combinations(simplex, len(simplex) - 1))
     v = dict()
     for face in set.intersection(set(boundary), homology_basis['keys']):
-        if not homology_basis['basis'].get(face): #Apply when face is not in 'basis'
-            homology_basis['basis'][face] = frozenset(((face, 1),)) #Adds face to 'basis'
-            homology_basis['transpose'][face] = set(((face, 1),)) #Adds face to 'transpose'
-        for h_face, h_value in homology_basis['basis'][face]: ##############What exactly is h_val in persistence homology?
-            
-            #v not equal to zero (death) check from theorem 1.9
-            v_value = (v.pop(h_face, 0) + ##################################################what does v.pop(h_face, 0) do?
+        if not homology_basis['basis'].get(face):
+            homology_basis['basis'][face] = frozenset(((face, 1),))
+            homology_basis['transpose'][face] = set(((face, 1),))
+        for h_face, h_value in homology_basis['basis'][face]:            
+            v_value = (v.pop(h_face, 0) +
                        (-1)**boundary.index(face) * h_value) % homology_basis['coeff_field']
-            if v_value > 0:#####################################################This checks if the value in the old 
-                v[h_face] = v_value                                             #homology basis non zero.
+            if v_value > 0: 
+                v[h_face] = v_value
         
     if v:
         kill_persistence(homology_basis, v, simplex)
@@ -492,7 +486,6 @@ def persistence_pairs(
     homology_basis,
     filtration_function,
     max_dimension):
-    #index_table = {face: index for index, face in enumerate(simplicial_complex)}
     persistent_homology_pairs = dict()
  
     for birth in homology_basis['keys'].difference(homology_basis['persistence'].keys()):
@@ -504,35 +497,81 @@ def persistence_pairs(
     for birth, death in homology_basis['persistence'].items():
         pairs = persistent_homology_pairs.get(
             len(birth) - 1, list())
-        pairs.append((
-            filtration_function(birth), filtration_function(death)))
+        pairs.append((filtration_function(birth), filtration_function(death)))
         persistent_homology_pairs[len(birth) - 1] = pairs
     persistent_homology_pairs = {dim: np.array(pairs) for dim, pairs in persistent_homology_pairs.items()}
     persistent_homology_pairs = {dim: pairs[pairs[:,0] + 5*np.finfo(float).eps < pairs[:,1]]
                                  for dim, pairs in persistent_homology_pairs.items()}
     persistent_homology_pairs = {dim: pairs[np.argsort(
-        pairs[:,0] - pairs[:,1])] for dim, pairs in persistent_homology_pairs.items()}#####################################
-    persistent_homology_pairs = {dim: pairs for dim, pairs in persistent_homology_pairs.items() if len(pairs) > 0}#########
+        pairs[:,0] - pairs[:,1])] for dim, pairs in persistent_homology_pairs.items()}
+    persistent_homology_pairs = {dim: pairs for dim, pairs in persistent_homology_pairs.items() if len(pairs) > 0}
     for dim in range(max_dimension):
         persistent_homology_pairs.setdefault(dim, np.empty((0,2))) 
     return persistent_homology_pairs
 
-def barcodes(pers_pairs):
-    dims=len(pers_pairs)
-    barcodes=[]
+def pers(sigma):
+    return sigma[1]-sigma[0]
 
+def barcodes(pers_pairs):
+    barcodes=[]
+    max_time=0
+    bars=0
+    for Tau in pers_pairs.values():
+        bars+=len(Tau)
+        for tau in Tau:
+            if tau[1]>max_time and tau[1]!=np.inf:
+                max_time=tau[1]
+            if tau[0]>max_time:
+                max_time=tau[0]
+    max_time=max_time*1.01
+    for dim in pers_pairs:
+        pers_pairs[dim]=sorted(pers_pairs[dim], key=pers)
+        for i,x in list(enumerate(pers_pairs[0]))[::-1]:
+            if x[1]==np.inf:
+                pers_pairs[dim][i][1]=max_time
+                continue
+            else:
+                break
+
+    fig,ax=plt.subplots(nrows=1,ncols=1,figsize=(6,8))
+    ax.axvline(x=max_time,color='k',alpha=0.75,linestyle='--',label='∞')
+
+    ax.axes.get_yaxis().set_visible(False)
+    k=0
+    step=1/bars
+    colors=['tab:blue','tab:orange','tab:green']
     for i in range(len(pers_pairs)):
-        for n,pair in enumerate(list(pers_pairs.items())[i][1]):
-            barcodes.append([[pair[0],0.0],[pair[1],0.0]])
-    max_filt=barcodes[-1][1][0]
-    barcodes[0]=[[0.0,0.0],[max_filt*1.5,0]]
-    step=1/len(barcodes)
-    for j in range(len(barcodes)):
-        barcodes[j][0]=((barcodes[j][0][0]),(j+1)*step)
-        barcodes[j][1]=((barcodes[j][1][0]),(j+1)*step)
-    l = mc.LineCollection(barcodes, linewidths=1)
-    fig, ax = pl.subplots()
-    ax.add_collection(l)
-    ax.autoscale()
-    ax.margins(0.1)
+        for j,sigma in enumerate(pers_pairs[i]):
+            if j==0:
+                ax.plot([sigma[0],sigma[1]],[k,k],color=colors[i%3],label=f"$H_{i}$")
+            ax.plot([sigma[0],sigma[1]],[k,k],color=colors[i%3])
+            k+=step
     ax.set_title('Barcode Diagram')
+    ax.legend(loc='lower right')
+
+def plot_persistence(pers_pairs):
+    max_time=0
+    for Tau in pers_pairs.values():
+        for tau in Tau:
+            if tau[1]>max_time and tau[1]!=np.inf:
+                max_time=tau[1]
+    infinity=max_time*1.01
+    fig,ax=plt.subplots()
+    plt.plot([-max_time*0.05,max_time*1.05],[-max_time*0.05,max_time*1.05],color='k',zorder=0)
+    plt.axhline(y=infinity,color='k',linestyle='--',label='∞',zorder=0)
+    for i in range(len(pers_pairs)):
+        X=[]
+        Y=[]
+        for sigma in pers_pairs[i]:
+            if sigma[1]==np.inf:
+                X.append(sigma[0])
+                Y.append(infinity)
+                continue
+            X.append(sigma[0])
+            Y.append(sigma[1])  
+        ax.scatter(X,Y,s=100,alpha=0.4,label=f"$H_{i}$",zorder=1)
+    ax.axis([-max_time*0.05,max_time*1.05,-max_time*0.05,max_time*1.05])
+    ax.set_ylabel('Death')
+    ax.set_xlabel('Birth')
+    ax.set_title('Persistence Diagram')
+    ax.legend(loc='lower right')
